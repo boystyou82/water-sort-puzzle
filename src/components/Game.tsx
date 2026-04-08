@@ -1,52 +1,94 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  CAPACITY,
-  GameState,
   PALETTE,
+  GameState,
+  addEmptyTube,
+  findHint,
   generateLevel,
   isSolved,
   pour,
+  starsFor,
   undo,
 } from "@/lib/game";
 
-const STORAGE_KEY = "water-sort-progress-v1";
+const STORAGE_KEY = "water-sort-save-v2";
+
+type Save = { level: number; coins: number; stars: Record<number, number> };
+
+const HINT_COST = 20;
+const TUBE_COST = 50;
+const REWARD_BASE = 30;
 
 export default function Game() {
   const [state, setState] = useState<GameState | null>(null);
+  const [save, setSave] = useState<Save>({ level: 1, coins: 100, stars: {} });
   const [selected, setSelected] = useState<number | null>(null);
+  const [hint, setHint] = useState<[number, number] | null>(null);
   const [won, setWon] = useState(false);
+  const [confetti, setConfetti] = useState<number[]>([]);
+  const [shake, setShake] = useState<number | null>(null);
+  const loaded = useRef(false);
 
-  // Load saved level
+  // Load
   useEffect(() => {
-    let level = 1;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (typeof parsed.level === "number") level = parsed.level;
+        const s: Save = {
+          level: parsed.level ?? 1,
+          coins: parsed.coins ?? 100,
+          stars: parsed.stars ?? {},
+        };
+        setSave(s);
+        setState(generateLevel(s.level));
+      } else {
+        setState(generateLevel(1));
       }
-    } catch {}
-    setState(generateLevel(level));
+    } catch {
+      setState(generateLevel(1));
+    }
+    loaded.current = true;
   }, []);
 
-  // Persist level
+  // Persist
   useEffect(() => {
-    if (!state) return;
+    if (!loaded.current) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ level: state.level }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(save));
     } catch {}
-  }, [state?.level]);
+  }, [save]);
 
-  // Detect win
+  // Win detection
   useEffect(() => {
-    if (state && isSolved(state)) setWon(true);
-  }, [state]);
+    if (state && !won && isSolved(state)) {
+      const earned = starsFor(state);
+      const prev = save.stars[state.level] ?? 0;
+      const bestStars = Math.max(prev, earned);
+      const reward = REWARD_BASE + earned * 10;
+      setWon(true);
+      setSave((s) => ({
+        ...s,
+        coins: s.coins + reward,
+        stars: { ...s.stars, [state.level]: bestStars },
+      }));
+      // confetti pieces
+      setConfetti(Array.from({ length: 60 }, (_, i) => i));
+    }
+  }, [state, won]);
+
+  // Auto-clear hint after a few seconds
+  useEffect(() => {
+    if (!hint) return;
+    const t = setTimeout(() => setHint(null), 3000);
+    return () => clearTimeout(t);
+  }, [hint]);
 
   if (!state) {
     return (
-      <main style={{ display: "grid", placeItems: "center", height: "100vh" }}>
+      <main style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
         <p>Loading…</p>
       </main>
     );
@@ -54,6 +96,7 @@ export default function Game() {
 
   const handleTubeClick = (idx: number) => {
     if (won) return;
+    setHint(null);
     if (selected === null) {
       if (state.tubes[idx].length === 0) return;
       setSelected(idx);
@@ -68,7 +111,8 @@ export default function Game() {
       setState(next);
       setSelected(null);
     } else {
-      // try selecting new source
+      setShake(idx);
+      setTimeout(() => setShake(null), 300);
       if (state.tubes[idx].length > 0) setSelected(idx);
       else setSelected(null);
     }
@@ -85,181 +129,249 @@ export default function Game() {
   const handleReset = () => {
     setState(generateLevel(state.level));
     setSelected(null);
+    setHint(null);
     setWon(false);
+    setConfetti([]);
   };
 
   const handleNext = () => {
-    setState(generateLevel(state.level + 1));
+    const newLevel = state.level + 1;
+    setState(generateLevel(newLevel));
+    setSave((s) => ({ ...s, level: newLevel }));
     setSelected(null);
+    setHint(null);
     setWon(false);
+    setConfetti([]);
   };
 
-  return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        padding: "20px 16px 40px",
-      }}
-    >
-      <header style={{ textAlign: "center", marginBottom: 16 }}>
-        <h1
-          style={{
-            fontSize: 28,
-            fontWeight: 800,
-            background: "linear-gradient(90deg,#06b6d4,#8b5cf6)",
-            WebkitBackgroundClip: "text",
-            color: "transparent",
-            letterSpacing: 0.5,
-          }}
-        >
-          Water Sort Puzzle
-        </h1>
-        <p style={{ fontSize: 13, color: "#94a3b8", marginTop: 4 }}>
-          Tap a tube to pick water, tap another to pour
-        </p>
-      </header>
+  const handleHint = () => {
+    if (save.coins < HINT_COST) return;
+    const h = findHint(state);
+    if (h) {
+      setHint(h);
+      setSave((s) => ({ ...s, coins: s.coins - HINT_COST }));
+    }
+  };
 
-      <div
+  const handleAddTube = () => {
+    if (save.coins < TUBE_COST) return;
+    setState(addEmptyTube(state));
+    setSave((s) => ({ ...s, coins: s.coins - TUBE_COST }));
+  };
+
+  const currentStars = save.stars[state.level] ?? 0;
+
+  return (
+    <>
+      <Bubbles />
+      <main
         style={{
+          position: "relative",
+          zIndex: 1,
+          minHeight: "100vh",
           display: "flex",
-          gap: 16,
-          fontSize: 14,
-          color: "#cbd5e1",
-          marginBottom: 16,
+          flexDirection: "column",
+          alignItems: "center",
+          padding: "16px 12px 32px",
         }}
       >
-        <Stat label="Level" value={state.level} />
-        <Stat label="Moves" value={state.moves} />
-        <Stat label="Tubes" value={state.tubes.length} />
-      </div>
+        {/* Top bar */}
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 600,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 16,
+            gap: 8,
+          }}
+        >
+          <div className="pill">
+            <span style={{ fontSize: 18 }}>🏆</span>
+            <span>Lv {state.level}</span>
+          </div>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[1, 2, 3].map((i) => (
+              <span key={i} style={{ fontSize: 22, filter: i <= currentStars ? "none" : "grayscale(1) opacity(0.3)" }}>
+                ⭐
+              </span>
+            ))}
+          </div>
+          <div className="pill">
+            <span style={{ fontSize: 18 }}>🪙</span>
+            <span>{save.coins}</span>
+          </div>
+        </div>
 
-      <TubesBoard
-        tubes={state.tubes}
-        capacity={state.capacity}
-        selected={selected}
-        onTubeClick={handleTubeClick}
-      />
+        {/* Title */}
+        <h1
+          className="title-glow"
+          style={{ fontSize: 32, marginBottom: 4, letterSpacing: 0.5 }}
+        >
+          Water Sort
+        </h1>
+        <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 24 }}>
+          {state.moves} moves
+        </p>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 24, flexWrap: "wrap", justifyContent: "center" }}>
-        <Button onClick={handleUndo} disabled={state.history.length === 0}>
-          ↶ Undo
-        </Button>
-        <Button onClick={handleReset}>↻ Reset</Button>
-        <Button onClick={handleNext} variant="ghost">
-          Skip →
-        </Button>
-      </div>
+        {/* Board */}
+        <TubesBoard
+          tubes={state.tubes}
+          capacity={state.capacity}
+          selected={selected}
+          hint={hint}
+          shake={shake}
+          onTubeClick={handleTubeClick}
+        />
+
+        {/* Controls */}
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            marginTop: 32,
+            flexWrap: "wrap",
+            justifyContent: "center",
+          }}
+        >
+          <button className="clay-btn" onClick={handleUndo} disabled={state.history.length === 0}>
+            ↶ Undo
+          </button>
+          <button
+            className="clay-btn amber"
+            onClick={handleHint}
+            disabled={save.coins < HINT_COST}
+          >
+            💡 Hint
+            <span style={{ fontSize: 11, opacity: 0.85 }}>-{HINT_COST}🪙</span>
+          </button>
+          <button
+            className="clay-btn teal"
+            onClick={handleAddTube}
+            disabled={save.coins < TUBE_COST}
+          >
+            ➕ Tube
+            <span style={{ fontSize: 11, opacity: 0.85 }}>-{TUBE_COST}🪙</span>
+          </button>
+          <button className="clay-btn rose" onClick={handleReset}>
+            ↻ Reset
+          </button>
+        </div>
+
+        <p style={{ marginTop: 24, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          Tap a tube to pick water · tap another to pour
+        </p>
+      </main>
+
+      {confetti.length > 0 && <Confetti pieces={confetti} />}
 
       {won && (
         <div
-          onClick={handleNext}
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(2,6,23,0.7)",
-            backdropFilter: "blur(6px)",
+            background: "rgba(5,5,25,0.7)",
+            backdropFilter: "blur(10px)",
             display: "grid",
             placeItems: "center",
-            zIndex: 50,
-            cursor: "pointer",
+            zIndex: 200,
           }}
         >
-          <div
-            style={{
-              background: "linear-gradient(180deg,#1e293b,#0f172a)",
-              border: "1px solid #334155",
-              borderRadius: 20,
-              padding: "32px 40px",
-              textAlign: "center",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontSize: 56 }}>🎉</div>
-            <h2 style={{ fontSize: 26, marginTop: 8 }}>Level {state.level} Cleared!</h2>
-            <p style={{ color: "#94a3b8", marginTop: 6 }}>{state.moves} moves</p>
+          <div className="modal-card">
+            <div style={{ fontSize: 64, lineHeight: 1 }}>🎉</div>
+            <h2 style={{ fontSize: 28, marginTop: 12, fontWeight: 700 }}>
+              Level {state.level} Cleared!
+            </h2>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 14 }}>
+              {[1, 2, 3].map((i) => (
+                <span
+                  key={i}
+                  style={{
+                    fontSize: 36,
+                    filter: i <= starsFor(state) ? "none" : "grayscale(1) opacity(0.3)",
+                    animation: `pop-in 400ms ${i * 150}ms backwards`,
+                    display: "inline-block",
+                  }}
+                >
+                  ⭐
+                </span>
+              ))}
+            </div>
+            <p style={{ color: "#a5b4fc", marginTop: 12, fontSize: 14 }}>
+              {state.moves} moves · +{REWARD_BASE + starsFor(state) * 10} 🪙
+            </p>
             <button
+              className="clay-btn"
               onClick={handleNext}
-              style={{
-                marginTop: 20,
-                padding: "12px 28px",
-                fontSize: 16,
-                fontWeight: 700,
-                color: "white",
-                background: "linear-gradient(90deg,#06b6d4,#8b5cf6)",
-                border: "none",
-                borderRadius: 999,
-                cursor: "pointer",
-              }}
+              style={{ marginTop: 22, fontSize: 17, padding: "16px 36px" }}
             >
               Next Level →
             </button>
           </div>
         </div>
       )}
-
-      <footer style={{ marginTop: "auto", paddingTop: 32, fontSize: 12, color: "#64748b" }}>
-        Made with ♥ — no signup, no ads, just puzzles
-      </footer>
-    </main>
+    </>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number | string }) {
+function Bubbles() {
+  const bubbles = useMemo(
+    () =>
+      Array.from({ length: 14 }, (_, i) => ({
+        size: 20 + Math.random() * 60,
+        left: Math.random() * 100,
+        duration: 12 + Math.random() * 18,
+        delay: -Math.random() * 20,
+      })),
+    []
+  );
   return (
-    <div
-      style={{
-        background: "rgba(30,41,59,0.6)",
-        border: "1px solid #334155",
-        borderRadius: 12,
-        padding: "6px 14px",
-        textAlign: "center",
-        minWidth: 70,
-      }}
-    >
-      <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase" }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: "#f1f5f9" }}>{value}</div>
+    <div className="bubbles">
+      {bubbles.map((b, i) => (
+        <div
+          key={i}
+          className="bubble"
+          style={{
+            width: b.size,
+            height: b.size,
+            left: `${b.left}%`,
+            animationDuration: `${b.duration}s`,
+            animationDelay: `${b.delay}s`,
+          }}
+        />
+      ))}
     </div>
   );
 }
 
-function Button({
-  children,
-  onClick,
-  disabled,
-  variant,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-  variant?: "ghost";
-}) {
+function Confetti({ pieces }: { pieces: number[] }) {
+  const colors = ["#5eead4", "#a78bfa", "#f472b6", "#fbbf24", "#60a5fa", "#34d399"];
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        padding: "10px 20px",
-        fontSize: 14,
-        fontWeight: 600,
-        color: "#e2e8f0",
-        background:
-          variant === "ghost"
-            ? "transparent"
-            : "linear-gradient(180deg,#334155,#1e293b)",
-        border: "1px solid #475569",
-        borderRadius: 10,
-        opacity: disabled ? 0.4 : 1,
-        cursor: disabled ? "not-allowed" : "pointer",
-      }}
-    >
-      {children}
-    </button>
+    <>
+      {pieces.map((i) => {
+        const left = Math.random() * 100;
+        const dur = 2 + Math.random() * 2;
+        const delay = Math.random() * 0.5;
+        const color = colors[i % colors.length];
+        const size = 6 + Math.random() * 10;
+        return (
+          <div
+            key={i}
+            className="confetti-piece"
+            style={{
+              left: `${left}%`,
+              width: size,
+              height: size,
+              background: color,
+              borderRadius: i % 3 === 0 ? "50%" : "2px",
+              animationDuration: `${dur}s`,
+              animationDelay: `${delay}s`,
+            }}
+          />
+        );
+      })}
+    </>
   );
 }
 
@@ -267,30 +379,34 @@ function TubesBoard({
   tubes,
   capacity,
   selected,
+  hint,
+  shake,
   onTubeClick,
 }: {
   tubes: number[][];
   capacity: number;
   selected: number | null;
+  hint: [number, number] | null;
+  shake: number | null;
   onTubeClick: (i: number) => void;
 }) {
-  // Wrap into rows of max 7 tubes
-  const perRow = useMemo(() => (tubes.length <= 7 ? tubes.length : Math.ceil(tubes.length / 2)), [tubes.length]);
+  const perRow = tubes.length <= 7 ? tubes.length : Math.ceil(tubes.length / 2);
   const rows: number[][] = [];
   for (let i = 0; i < tubes.length; i += perRow) {
     rows.push(Array.from({ length: Math.min(perRow, tubes.length - i) }, (_, k) => i + k));
   }
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, alignItems: "center" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 22, alignItems: "center" }}>
       {rows.map((row, ri) => (
-        <div key={ri} style={{ display: "flex", gap: 14 }}>
+        <div key={ri} style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" }}>
           {row.map((i) => (
             <Tube
               key={i}
               units={tubes[i]}
               capacity={capacity}
               selected={selected === i}
+              hint={hint?.[0] === i || hint?.[1] === i}
+              shake={shake === i}
               onClick={() => onTubeClick(i)}
             />
           ))}
@@ -304,60 +420,66 @@ function Tube({
   units,
   capacity,
   selected,
+  hint,
+  shake,
   onClick,
 }: {
   units: number[];
   capacity: number;
   selected: boolean;
+  hint: boolean;
+  shake: boolean;
   onClick: () => void;
 }) {
-  const unitH = 36;
-  const tubeW = 52;
-  const tubeH = unitH * capacity + 8;
+  const unitH = 38;
+  const tubeW = 56;
+  const tubeH = unitH * capacity + 10;
   return (
     <button
       onClick={onClick}
       aria-label="tube"
+      className={`tube-wrap ${selected ? "selected" : ""} ${hint ? "hint" : ""}`}
       style={{
         width: tubeW + 8,
-        height: tubeH + (selected ? 12 : 0),
+        height: tubeH + 22,
         background: "transparent",
         border: "none",
         padding: 0,
-        transform: selected ? "translateY(-12px)" : "translateY(0)",
-        transition: "transform 180ms ease",
+        animation: shake ? "shake 300ms" : undefined,
       }}
     >
       <div
+        className={`tube ${selected ? "selected" : ""}`}
         style={{
           width: tubeW,
           height: tubeH,
-          margin: "0 auto",
-          background: "rgba(148,163,184,0.08)",
-          border: "3px solid #cbd5e1",
-          borderTop: "none",
-          borderRadius: "0 0 26px 26px",
+          margin: "10px auto 0",
           display: "flex",
           flexDirection: "column-reverse",
-          overflow: "hidden",
-          position: "relative",
-          boxShadow: selected
-            ? "0 0 0 3px #06b6d4, 0 10px 30px rgba(6,182,212,0.4)"
-            : "inset 0 0 12px rgba(0,0,0,0.4)",
         }}
       >
-        {units.map((c, idx) => (
-          <div
-            key={idx}
-            style={{
-              height: unitH,
-              background: PALETTE[c % PALETTE.length],
-              borderTop: idx === units.length - 1 ? "1px solid rgba(255,255,255,0.25)" : "none",
-              transition: "all 200ms ease",
-            }}
-          />
-        ))}
+        {units.map((c, idx) => {
+          const color = PALETTE[c % PALETTE.length];
+          const isTop = idx === units.length - 1;
+          return (
+            <div
+              key={idx}
+              className={`water-layer ${isTop ? "top" : ""}`}
+              style={{
+                height: unitH,
+                background: `linear-gradient(180deg, ${color.light} 0%, ${color.base} 50%, ${color.dark} 100%)`,
+              }}
+            />
+          );
+        })}
       </div>
+      <style jsx>{`
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-6px); }
+          75% { transform: translateX(6px); }
+        }
+      `}</style>
     </button>
   );
 }

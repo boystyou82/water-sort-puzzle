@@ -9,19 +9,20 @@ export type GameState = {
   history: Tube[][];
 };
 
-export const PALETTE = [
-  "#ef4444", // red
-  "#f59e0b", // amber
-  "#eab308", // yellow
-  "#22c55e", // green
-  "#06b6d4", // cyan
-  "#3b82f6", // blue
-  "#8b5cf6", // violet
-  "#ec4899", // pink
-  "#14b8a6", // teal
-  "#f97316", // orange
-  "#a3e635", // lime
-  "#e879f9", // fuchsia
+// Jewel-tone palette: each color is [base, highlight, shadow] for glossy water look
+export const PALETTE: { base: string; light: string; dark: string }[] = [
+  { base: "#ff3b6b", light: "#ff7a9c", dark: "#c41e47" }, // ruby
+  { base: "#ff8a3d", light: "#ffb072", dark: "#c25510" }, // amber
+  { base: "#ffd93d", light: "#fff08a", dark: "#c79a00" }, // gold
+  { base: "#3ddc97", light: "#7af0b8", dark: "#129e60" }, // emerald
+  { base: "#3dd9eb", light: "#8af0fb", dark: "#0a8fa0" }, // turquoise
+  { base: "#4d6cff", light: "#8aa1ff", dark: "#1f3acc" }, // sapphire
+  { base: "#9b5cff", light: "#c298ff", dark: "#5a26b3" }, // amethyst
+  { base: "#ff5cd1", light: "#ff9be3", dark: "#b3239b" }, // pink
+  { base: "#10b981", light: "#5fd8a8", dark: "#067a52" }, // teal
+  { base: "#fb7185", light: "#ffaab8", dark: "#b8364c" }, // coral
+  { base: "#a3e635", light: "#caf16e", dark: "#6b9e10" }, // lime
+  { base: "#e879f9", light: "#f4b3fc", dark: "#a626b9" }, // fuchsia
 ];
 
 export const CAPACITY = 4;
@@ -138,6 +139,55 @@ export function undo(state: GameState): GameState | null {
     moves: Math.max(0, state.moves - 1),
     history: state.history.slice(0, -1),
   };
+}
+
+// Find any valid move that makes progress (not pouring into a tube of same single color trivially)
+export function findHint(state: GameState): [number, number] | null {
+  const n = state.tubes.length;
+  // Prefer moves that empty a source or complete a destination
+  const candidates: { from: number; to: number; score: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue;
+      if (!canPour(state.tubes[i], state.tubes[j], state.capacity)) continue;
+      const from = state.tubes[i];
+      const to = state.tubes[j];
+      // skip useless: pouring full single-color tube into empty
+      if (
+        to.length === 0 &&
+        topRunSize(from) === from.length &&
+        from.length === state.capacity
+      )
+        continue;
+      let score = 0;
+      const movable = Math.min(topRunSize(from), state.capacity - to.length);
+      if (movable === topRunSize(from)) score += 2; // empties the run
+      if (to.length + movable === state.capacity) score += 3; // completes
+      if (to.length === 0) score -= 1;
+      candidates.push({ from: i, to: j, score });
+    }
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  return [candidates[0].from, candidates[0].to];
+}
+
+// Add an empty tube (power-up)
+export function addEmptyTube(state: GameState): GameState {
+  return {
+    ...state,
+    tubes: [...state.tubes.map((t) => t.slice()), []],
+    history: [...state.history, state.tubes.map((t) => t.slice())],
+  };
+}
+
+// Star rating based on moves vs theoretical minimum
+export function starsFor(state: GameState): number {
+  const colors = state.tubes.filter((t) => t.length > 0).length;
+  const par = colors * 2;
+  if (state.moves <= par) return 3;
+  if (state.moves <= par * 1.6) return 2;
+  return 1;
 }
 
 export function isSolved(state: GameState): boolean {

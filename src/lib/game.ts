@@ -9,20 +9,20 @@ export type GameState = {
   history: Tube[][];
 };
 
-// Jewel-tone palette: each color is [base, highlight, shadow] for glossy water look
+// Ghibli-inspired watercolor palette: warm, natural, slightly muted
 export const PALETTE: { base: string; light: string; dark: string }[] = [
-  { base: "#ff3b6b", light: "#ff7a9c", dark: "#c41e47" }, // ruby
-  { base: "#ff8a3d", light: "#ffb072", dark: "#c25510" }, // amber
-  { base: "#ffd93d", light: "#fff08a", dark: "#c79a00" }, // gold
-  { base: "#3ddc97", light: "#7af0b8", dark: "#129e60" }, // emerald
-  { base: "#3dd9eb", light: "#8af0fb", dark: "#0a8fa0" }, // turquoise
-  { base: "#4d6cff", light: "#8aa1ff", dark: "#1f3acc" }, // sapphire
-  { base: "#9b5cff", light: "#c298ff", dark: "#5a26b3" }, // amethyst
-  { base: "#ff5cd1", light: "#ff9be3", dark: "#b3239b" }, // pink
-  { base: "#10b981", light: "#5fd8a8", dark: "#067a52" }, // teal
-  { base: "#fb7185", light: "#ffaab8", dark: "#b8364c" }, // coral
-  { base: "#a3e635", light: "#caf16e", dark: "#6b9e10" }, // lime
-  { base: "#e879f9", light: "#f4b3fc", dark: "#a626b9" }, // fuchsia
+  { base: "#e88b8b", light: "#f5b8b8", dark: "#b85f5f" }, // 토토로 빨간 우산
+  { base: "#e8a878", light: "#f0c8a0", dark: "#b87850" }, // 가을 호박
+  { base: "#e8c878", light: "#f0dca0", dark: "#b89850" }, // 노란 들꽃
+  { base: "#90c890", light: "#b8e0b8", dark: "#5f9858" }, // 숲 이끼
+  { base: "#88c8d8", light: "#b0dde8", dark: "#5898a8" }, // 하늘색 강물
+  { base: "#88a8d8", light: "#b0c8e8", dark: "#5878a8" }, // 푸른 하늘
+  { base: "#b89cd8", light: "#d4c0e8", dark: "#8870a8" }, // 라벤더 들판
+  { base: "#e8a0c0", light: "#f0c0d8", dark: "#b87090" }, // 벚꽃 분홍
+  { base: "#78c0b0", light: "#a8d8cc", dark: "#509080" }, // 풀빛 연못
+  { base: "#d89878", light: "#e8b8a0", dark: "#a86850" }, // 흙 갈색
+  { base: "#c8d878", light: "#dde8a0", dark: "#98a850" }, // 잎새 연두
+  { base: "#c8a0d8", light: "#dcc0e8", dark: "#9870a8" }, // 보랏빛 새벽
 ];
 
 export const CAPACITY = 4;
@@ -188,6 +188,30 @@ export function starsFor(state: GameState): number {
   if (state.moves <= par) return 3;
   if (state.moves <= par * 1.6) return 2;
   return 1;
+}
+
+// Daily challenge: deterministic seed from today's date (YYYY-MM-DD)
+export function todayKey(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export function dailySeed(key: string = todayKey()): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+export function generateDaily(date: Date = new Date()): GameState {
+  // Daily fixed at level 6 difficulty for fairness
+  const seed = dailySeed(todayKey(date));
+  const state = generateLevel(6, seed);
+  return { ...state, level: 0 }; // level 0 = daily marker
 }
 
 export function isSolved(state: GameState): boolean {

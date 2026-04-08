@@ -52,6 +52,8 @@ export default function Game() {
   const [shake, setShake] = useState<number | null>(null);
   const [coinBump, setCoinBump] = useState(false);
   const [enteringIdx, setEnteringIdx] = useState<{ tube: number; layer: number } | null>(null);
+  const [popText, setPopText] = useState<{ text: string; x: number; y: number; id: number } | null>(null);
+  const popId = useRef(0);
   const loaded = useRef(false);
 
   // Load save
@@ -155,7 +157,15 @@ export default function Game() {
     }
   };
 
-  const handleTubeClick = (idx: number) => {
+  const showPop = (text: string, e: React.MouseEvent | { clientX?: number; clientY?: number }) => {
+    const x = "clientX" in e && e.clientX ? e.clientX : window.innerWidth / 2;
+    const y = "clientY" in e && e.clientY ? e.clientY : window.innerHeight / 2;
+    const id = ++popId.current;
+    setPopText({ text, x, y, id });
+    setTimeout(() => setPopText((p) => (p?.id === id ? null : p)), 800);
+  };
+
+  const handleTubeClick = (idx: number, e?: React.MouseEvent) => {
     if (won) return;
     setHint(null);
     if (selected === null) {
@@ -172,13 +182,14 @@ export default function Game() {
     const next = pour(state, selected, idx);
     if (next) {
       sounds.pour();
-      // mark new top layer for entry animation
+      if (e) showPop("POP!", e);
       setEnteringIdx({ tube: idx, layer: next.tubes[idx].length - 1 });
       setState(next);
       setSelected(null);
       setTimeout(() => setEnteringIdx(null), 450);
     } else {
       sounds.invalid();
+      if (e) showPop("NOPE!", e);
       setShake(idx);
       setTimeout(() => setShake(null), 350);
       if (state.tubes[idx].length > 0) {
@@ -338,8 +349,18 @@ export default function Game() {
           hint={hint}
           shake={shake}
           enteringIdx={enteringIdx}
-          onTubeClick={handleTubeClick}
+          onTubeClick={(i, ev) => handleTubeClick(i, ev)}
         />
+
+        {popText && (
+          <div
+            key={popText.id}
+            className="pop-text"
+            style={{ left: popText.x, top: popText.y }}
+          >
+            {popText.text}
+          </div>
+        )}
 
         {/* Controls */}
         <div
@@ -383,6 +404,7 @@ export default function Game() {
       </main>
 
       {confetti.length > 0 && <Confetti pieces={confetti} />}
+      {won && <div className="action-burst" />}
 
       {won && (
         <div
@@ -582,7 +604,7 @@ function TubesBoard({
   hint: [number, number] | null;
   shake: number | null;
   enteringIdx: { tube: number; layer: number } | null;
-  onTubeClick: (i: number) => void;
+  onTubeClick: (i: number, e: React.MouseEvent) => void;
 }) {
   const perRow = tubes.length <= 7 ? tubes.length : Math.ceil(tubes.length / 2);
   const rows: number[][] = [];
@@ -606,7 +628,7 @@ function TubesBoard({
               hint={hint?.[0] === i || hint?.[1] === i}
               shake={shake === i}
               enteringLayer={enteringIdx?.tube === i ? enteringIdx.layer : -1}
-              onClick={() => onTubeClick(i)}
+              onClick={(e) => onTubeClick(i, e)}
             />
           ))}
         </div>
@@ -632,7 +654,7 @@ function Tube({
   hint: boolean;
   shake: boolean;
   enteringLayer: number;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent) => void;
 }) {
   const unitH = 40;
   const tubeW = 58;
@@ -661,6 +683,11 @@ function Tube({
           flexDirection: "column-reverse",
         }}
       >
+        <div className="tube-eyes">
+          <span className="eye" />
+          <span className="eye" />
+        </div>
+        <div className="tube-mouth" />
         {units.map((c, idx) => {
           const color = PALETTE[c % PALETTE.length];
           const isTop = idx === units.length - 1;
